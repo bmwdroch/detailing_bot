@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 import aiosqlite
 
 from core.models import Appointment, Client, Service, Transaction
-from services.db.queries import AppointmentQueries, ClientQueries, ServiceQueries, TransactionQueries
+from services.db.queries import AppointmentQueries, ClientQueries, ServiceQueries, SettingsQueries, TransactionQueries
 from utils.validators import (
     validate_amount, validate_appointment_time, validate_car_info,
     validate_category, validate_comment, validate_name, validate_phone, validate_service_description, validate_service_duration, validate_service_name, validate_service_price,
@@ -31,18 +31,81 @@ class DatabaseManager:
         self.logger = logging.getLogger(__name__)
 
     async def init_db(self) -> None:
-        """Инициализация базы данных - создание таблиц"""
+        """Инициализация базы данных"""
         try:
             async with aiosqlite.connect(self.database_path) as db:
-                # Создаем таблицы в правильном порядке (с учетом foreign keys)
                 await db.execute(ClientQueries.CREATE_TABLE)
                 await db.execute(AppointmentQueries.CREATE_TABLE)
                 await db.execute(TransactionQueries.CREATE_TABLE)
+                await db.execute(SettingsQueries.CREATE_TABLE)
+                
+                # Добавляем значения по умолчанию для контактов
+                default_contacts = (
+                    "📞 Наши контакты:\n\n"
+                    "Администраторы:\n"
+                    "- Александр: +7 (999) 765-43-21\n\n"
+                    "Мастера:\n"
+                    "- Андрей (основной мастер): +7 (999) 111-22-33\n"
+                    "- Дмитрий (помощник): +7 (999) 444-55-66\n\n"
+                    "Адрес: ул. Примерная, д. 1\n"
+                    "Время работы: 9:00 - 20:00\n\n"
+                    "Для записи используйте бот или звоните администраторам."
+                )
+                await db.execute(
+                    SettingsQueries.INSERT,
+                    ("contacts", default_contacts, datetime.now())
+                )
+                
                 await db.commit()
-                self.logger.info("Database initialized successfully")
         except Exception as e:
             self.logger.error(f"Error initializing database: {e}")
             raise
+
+    async def get_setting(self, key: str) -> Optional[str]:
+        """
+        Получение значения настройки
+        
+        Args:
+            key: ключ настройки
+            
+        Returns:
+            Optional[str]: значение настройки
+        """
+        try:
+            async with aiosqlite.connect(self.database_path) as db:
+                async with db.execute(SettingsQueries.GET_BY_KEY, (key,)) as cursor:
+                    row = await cursor.fetchone()
+                    return row[0] if row else None
+        except Exception as e:
+            self.logger.error(f"Error getting setting {key}: {e}")
+            return None
+
+    async def update_setting(
+        self,
+        key: str,
+        value: str
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Обновление значения настройки
+        
+        Args:
+            key: ключ настройки
+            value: новое значение
+            
+        Returns:
+            Tuple[bool, Optional[str]]: (успех, текст ошибки)
+        """
+        try:
+            async with aiosqlite.connect(self.database_path) as db:
+                await db.execute(
+                    SettingsQueries.UPDATE,
+                    (value, datetime.now(), key)
+                )
+                await db.commit()
+                return True, None
+        except Exception as e:
+            self.logger.error(f"Error updating setting {key}: {e}")
+            return False, str(e)
 
     async def add_client(self, telegram_id: int, name: str, phone: str) -> Tuple[bool, Optional[str], Optional[Client]]:
         """

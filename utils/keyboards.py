@@ -33,6 +33,7 @@ def get_main_menu_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add(KeyboardButton("📝 Записаться на услугу"))
     keyboard.add(KeyboardButton("📅 Мои записи"))
+    keyboard.add(KeyboardButton("📞 Контакты"))
     
     if is_admin:
         keyboard.add(KeyboardButton("👥 Все записи"))
@@ -40,6 +41,14 @@ def get_main_menu_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
         
     return keyboard
 
+def get_admin_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Создает клавиатуру административного меню"""
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.row("👥 Все записи", "📝 Управление услугами")
+    keyboard.row("💰 Касса", "📊 Статистика")
+    keyboard.row("✏️ Изменить контакты")
+    keyboard.row("❌ Отмена")
+    return keyboard
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
     """Клавиатура с кнопкой отмены"""

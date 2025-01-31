@@ -271,3 +271,29 @@ class TransactionQueries:
     DELETE FROM transactions
     WHERE id = ?
     """
+
+class SettingsQueries:
+    """SQL-запросы для работы с таблицей settings"""
+    
+    CREATE_TABLE = """
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMP NOT NULL
+    )
+    """
+
+    INSERT = """
+    INSERT OR REPLACE INTO settings (key, value, updated_at)
+    VALUES (?, ?, ?)
+    """
+
+    GET_BY_KEY = """
+    SELECT value FROM settings WHERE key = ?
+    """
+
+    UPDATE = """
+    UPDATE settings 
+    SET value = ?, updated_at = ?
+    WHERE key = ?
+    """

@@ -54,6 +54,69 @@ class AdminStates(StatesGroup):
     RESCHEDULE_TIME = State()
     ADD_COMMENT = State()
 
+    EDIT_CONTACTS = State()
+
+@router.message(Command("edit_contacts"))
+@router.message(F.text == "✏️ Изменить контакты")
+async def cmd_edit_contacts(
+    message: Message,
+    state: FSMContext,
+    db: DatabaseManager
+) -> None:
+    """Начало редактирования контактов"""
+    if not await check_admin(message):
+        return
+
+    # Получаем текущие контакты
+    current_contacts = await db.get_setting("contacts")
+    
+    await message.answer(
+        "Текущие контакты:\n\n"
+        f"{current_contacts}\n\n"
+        "Отправьте новый текст контактов или нажмите отмену:",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(AdminStates.EDIT_CONTACTS)
+
+@router.message(AdminStates.EDIT_CONTACTS)
+async def process_edit_contacts(
+    message: Message,
+    state: FSMContext,
+    db: DatabaseManager
+) -> None:
+    """Обработка нового текста контактов"""
+    new_contacts = message.text.strip()
+    
+    # Валидация текста
+    if len(new_contacts) < 10:
+        await message.answer(
+            "Текст контактов слишком короткий. "
+            "Пожалуйста, отправьте более подробную информацию:"
+        )
+        return
+        
+    if len(new_contacts) > 1000:
+        await message.answer(
+            "Текст контактов слишком длинный. "
+            "Пожалуйста, сократите информацию:"
+        )
+        return
+
+    # Обновляем контакты
+    success, error = await db.update_setting("contacts", new_contacts)
+    
+    if success:
+        await message.answer(
+            "✅ Контакты успешно обновлены!",
+            reply_markup=get_admin_menu_keyboard()
+        )
+    else:
+        await message.answer(
+            f"❌ Ошибка при обновлении контактов: {error}",
+            reply_markup=get_admin_menu_keyboard()
+        )
+    
+    await state.clear()
 
 class ServiceData:
     """Класс для хранения данных об услуге в процессе создания/редактирования"""

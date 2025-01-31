@@ -4,10 +4,10 @@
 """
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from aiogram import Bot
-from core.models import Appointment, Client, Transaction
+from core.models import Appointment, AppointmentStatus, Client, Transaction
 from utils.formatters import (
     format_appointment_info,
     format_datetime,
@@ -256,3 +256,46 @@ class NotificationService:
                 text += f"- {key}: {value}\n"
                 
         await self.send_message(admin_chat_id, text)
+
+    async def check_and_send_reminders(
+        self,
+        appointments: List[Appointment],
+        clients: Dict[int, Client]
+    ) -> None:
+        """
+        Проверка и отправка напоминаний о записях
+        
+        Args:
+            appointments: список активных записей
+            clients: словарь клиентов {client_id: Client}
+        """
+        now = datetime.now()
+        
+        for appointment in appointments:
+            # Пропускаем отмененные записи
+            if appointment.status == AppointmentStatus.CANCELLED:
+                continue
+                
+            # Получаем клиента
+            client = clients.get(appointment.client_id)
+            if not client:
+                continue
+                
+            time_diff = appointment.appointment_time - now
+            hours_until = time_diff.total_seconds() / 3600
+            
+            # Отправляем уведомление за 24 часа
+            if 23.5 <= hours_until <= 24.5:
+                await self.send_appointment_reminder(
+                    appointment,
+                    client,
+                    hours_before=24
+                )
+                
+            # Отправляем уведомление за 2 часа
+            elif 1.5 <= hours_until <= 2.5:
+                await self.send_appointment_reminder(
+                    appointment,
+                    client,
+                    hours_before=2
+                )

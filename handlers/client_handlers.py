@@ -499,6 +499,15 @@ async def process_appointment_confirmation(
     )
     await state.clear()
 
+@router.message(Command("contacts"))
+@router.message(F.text == "📞 Контакты")
+async def cmd_contacts(message: Message, db: DatabaseManager) -> None:
+    """Вывод контактной информации"""
+    contacts_text = await db.get_setting("contacts")
+    if not contacts_text:
+        contacts_text = "К сожалению, информация о контактах временно недоступна."
+        
+    await message.answer(contacts_text)
 
 @router.message(F.text == "📅 Мои записи")
 async def cmd_my_appointments(
