@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from core.models import AppointmentStatus, TransactionType
 
+@pytest.mark.asyncio
 async def test_add_client(test_db):
     """Тест создания клиента"""
     success, error, client = await test_db.add_client(
@@ -19,6 +20,7 @@ async def test_add_client(test_db):
     assert client.name == "Test Client"
     assert client.phone == "+79991234567"
 
+@pytest.mark.asyncio
 async def test_add_duplicate_client(test_db, test_client):
     """Тест обработки дублирования клиентов"""
     success, error, _ = await test_db.add_client(
@@ -30,9 +32,10 @@ async def test_add_duplicate_client(test_db, test_client):
     assert not success
     assert "уже существует" in error.lower()
 
+@pytest.mark.asyncio
 async def test_add_appointment(test_db, test_client, test_service):
     """Тест создания записи"""
-    appointment_time = datetime.now() + timedelta(days=1)
+    appointment_time = appointment_time = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     success, error, appointment = await test_db.add_appointment(
         client_id=test_client.id,
         service_id=test_service.id,
@@ -48,6 +51,7 @@ async def test_add_appointment(test_db, test_client, test_service):
     assert appointment.service_id == test_service.id
     assert appointment.status == AppointmentStatus.PENDING
 
+@pytest.mark.asyncio
 async def test_update_appointment_status(test_db, test_appointment):
     """Тест обновления статуса записи"""
     success, error = await test_db.update_appointment_status(
@@ -62,6 +66,7 @@ async def test_update_appointment_status(test_db, test_appointment):
     updated = await test_db.get_appointment(test_appointment.id)
     assert updated.status == AppointmentStatus.CONFIRMED
 
+@pytest.mark.asyncio
 async def test_add_transaction(test_db, test_appointment):
     """Тест создания транзакции"""
     success, error, transaction = await test_db.add_transaction(
@@ -78,6 +83,7 @@ async def test_add_transaction(test_db, test_appointment):
     assert transaction.amount == Decimal("1000.00")
     assert transaction.type == TransactionType.INCOME
     
+@pytest.mark.asyncio
 async def test_get_upcoming_appointments(test_db, test_appointment):
     """Тест получения предстоящих записей"""
     appointments = await test_db.get_upcoming_appointments()
@@ -85,6 +91,7 @@ async def test_get_upcoming_appointments(test_db, test_appointment):
     assert len(appointments) > 0
     assert test_appointment.id in [a.id for a in appointments]
 
+@pytest.mark.asyncio
 async def test_get_client_appointments(test_db, test_client, test_appointment):
     """Тест получения записей клиента"""
     appointments = await test_db.get_client_appointments(test_client.id)

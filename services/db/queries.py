@@ -98,6 +98,12 @@ class ClientQueries:
     WHERE id = ?
     """
 
+    GET_ALL = """
+    SELECT id, telegram_id, name, phone, created_at
+    FROM clients
+    ORDER BY id
+    """
+
     DELETE = """
     DELETE FROM clients
     WHERE telegram_id = ?
@@ -191,7 +197,7 @@ class AppointmentQueries:
     GET_BY_DATE_RANGE = """
     SELECT a.id, a.client_id, a.service_id, a.car_info,
            a.appointment_time, a.status, a.comment, a.created_at,
-           s.name as service_name, s.price as service_price
+           s.name as service_name, s.price as service_price, s.duration as service_duration
     FROM appointments a
     JOIN services s ON a.service_id = s.id
     WHERE date(a.appointment_time) BETWEEN date(?) AND date(?)

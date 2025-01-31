@@ -36,22 +36,28 @@ class AnalyticsService:
             Dict: статистика за день
         """
         try:
-            # Получаем все записи за день
+            # Получаем все записи за указанный день (по appointment_time)
             appointments = await self.db.get_appointments_by_date(date)
-            
-            # Получаем все транзакции за день
-            transactions = await self.db.get_transactions_by_date(date)
-            
-            # Считаем статистику по записям
+            # Получаем транзакции, связанные с записями, у которых appointment_time соответствует заданной дате
+            cursor = await self.db.conn.execute("""
+            SELECT id, appointment_id, amount, type, category, description, created_at
+            FROM transactions
+            WHERE appointment_id IN (
+                SELECT id FROM appointments WHERE date(appointment_time) = date(?)
+            )
+            """, (date,))
+            rows = await cursor.fetchall()
+            await cursor.close()
+            transactions = [Transaction.from_db(r) for r in rows]
+
             total_appointments = len(appointments)
             completed = sum(1 for a in appointments if a.status.value == 'completed')
             cancelled = sum(1 for a in appointments if a.status.value == 'cancelled')
-            
-            # Считаем финансовые показатели
+
             income = sum(t.amount for t in transactions if t.type.value == 'income')
             expense = sum(t.amount for t in transactions if t.type.value == 'expense')
             profit = income - expense
-            
+
             return {
                 'date': date,
                 'appointments': {

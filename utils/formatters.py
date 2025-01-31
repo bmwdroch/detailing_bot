@@ -39,20 +39,19 @@ def format_money(amount: Union[Decimal, float, str]) -> str:
     Returns:
         str: отформатированная сумма, например 1 234,56 ₽
     """
-    # Преобразуем во float для единообразия
     if isinstance(amount, str):
-        amount = float(amount)
-    elif isinstance(amount, Decimal):
-        amount = float(amount)
+        amount = Decimal(amount)
+    elif isinstance(amount, float):
+        amount = Decimal(str(amount))
+
+    # Округляем до 2 знаков и убираем лишние нули
+    amount = amount.quantize(Decimal("1.00")).normalize()
+    formatted = f"{amount:,.2f}".replace(",", " ").replace(".", ",")
     
-    # Форматируем с разделением разрядов
-    whole = int(amount)
-    fraction = int((amount - whole) * 100)
+    # Убираем лишние нули после запятой, если сумма целая
+    if formatted.endswith(",00"):
+        formatted = formatted[:-3]
     
-    formatted = f"{whole:,}".replace(',', ' ')
-    if fraction:
-        formatted += f",{fraction:02d}"
-        
     return f"{formatted} ₽"
 
 
@@ -95,46 +94,38 @@ def format_datetime(dt: datetime) -> str:
     return f"{format_date(dt)} {format_time(dt)}"
 
 
-def format_relative_date(dt: datetime) -> str:
+def format_relative_date(dt: datetime, now: Optional[datetime] = None) -> str:
     """
-    Форматирует дату относительно текущего времени
-    
-    Args:
-        dt: объект datetime
-        
-    Returns:
-        str: например, "через 2 часа" или "вчера в 15:30"
+    Форматирует дату относительно текущего времени.
+    Например: "через 30 минут", "через 2 часов", "завтра в 14:30", "1 часов назад", "вчера в 14:30"
     """
-    now = datetime.now()
+    if now is None:
+        now = datetime.now().replace(microsecond=0)
     diff = dt - now
-    
-    if diff > timedelta():  # Будущее время
-        if diff < timedelta(hours=1):
-            minutes = diff.seconds // 60
+    if diff.total_seconds() >= 0:
+        # Если запись не сегодня
+        if dt.date() != now.date():
+            if dt.date() == (now.date() + timedelta(days=1)):
+                return f"завтра в {dt.strftime('%H:%M')}"
+            else:
+                return dt.strftime("%d.%m.%Y %H:%M")
+        # Если запись сегодня – показываем через сколько
+        if diff < timedelta(minutes=60):
+            minutes = int(diff.total_seconds() // 60)
             return f"через {minutes} минут"
-        elif diff < timedelta(days=1):
-            hours = diff.seconds // 3600
+        else:
+            hours = int(diff.total_seconds() // 3600)
             return f"через {hours} часов"
-        elif diff < timedelta(days=2):
-            return f"завтра в {format_time(dt)}"
-        elif diff < timedelta(days=7):
-            return f"{dt.strftime('%A')} в {format_time(dt)}"
-        else:
-            return format_datetime(dt)
-    else:  # Прошедшее время
-        diff = abs(diff)
-        if diff < timedelta(hours=1):
-            minutes = diff.seconds // 60
+    else:
+        diff = -diff
+        if diff < timedelta(minutes=60):
+            minutes = int(diff.total_seconds() // 60)
             return f"{minutes} минут назад"
-        elif diff < timedelta(days=1):
-            hours = diff.seconds // 3600
-            return f"{hours} часов назад"
-        elif diff < timedelta(days=2):
-            return f"вчера в {format_time(dt)}"
-        elif diff < timedelta(days=7):
-            return f"в {dt.strftime('%A')} в {format_time(dt)}"
+        elif dt.date() == (now.date() - timedelta(days=1)):
+            return f"вчера в {dt.strftime('%H:%M')}"
         else:
-            return format_datetime(dt)
+            hours = int(diff.total_seconds() // 3600)
+            return f"{hours} часов назад"
 
 
 def format_appointment_status(status: AppointmentStatus) -> str:
@@ -189,7 +180,7 @@ def format_appointment_info(appointment: Appointment, include_client: bool = Fal
         f"📅 Запись #{appointment.id}\n"
         f"🕒 {format_datetime(appointment.appointment_time)}\n"
         f"🚗 {appointment.car_info}\n"
-        f"🛠 {appointment.service_type}\n"
+        f"🛠 Услуга #{appointment.service_id}\n"  # Используем service_id
         f"📊 {format_appointment_status(appointment.status)}"
     )
     
@@ -214,7 +205,7 @@ def format_transaction_info(transaction: Transaction, include_appointment: bool 
         str: отформатированная информация о транзакции
     """
     # Выбираем эмодзи в зависимости от типа
-    emoji = "💰" if transaction.type.value == "income" else "💸"
+    emoji = "💰" if transaction.type == "income" else "💸"
     
     result = (
         f"{emoji} {format_money(transaction.amount)}\n"

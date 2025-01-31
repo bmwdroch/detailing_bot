@@ -24,28 +24,24 @@ async def test_client(db):
     assert success
     return client
 
-# Тесты создания записи
+@pytest.mark.asyncio
 async def test_create_appointment(db, test_client):
-    # Создаем тестовую услугу
     service_success, _, service = await db.add_service(
         name="Тестовая услуга",
-        description="Описание",
+        description="Описание тестовой услуги",  # изменено с "Описание" на более длинное
         price="1000",
         duration=60,
         is_active=True
     )
     assert service_success
-
-    # Создаем запись
-    appointment_time = datetime.now() + timedelta(days=1)
+    appointment_time = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     success, error, appointment = await db.add_appointment(
         client_id=test_client.id,
-        service_type=service.name,
+        service_type=service.name,  # передаём service.name
         car_info="Toyota Camry",
         appointment_time=appointment_time,
         comment="Тестовый комментарий"
     )
-
     assert success
     assert error is None
     assert appointment is not None
@@ -53,38 +49,36 @@ async def test_create_appointment(db, test_client):
     assert appointment.client_id == test_client.id
     assert appointment.service_id == service.id
 
-# Тесты изменения статуса записи
+
+@pytest.mark.asyncio
 async def test_appointment_status_flow(db, test_client):
-    # Создаем запись
-    appointment_time = datetime.now() + timedelta(days=1)
+    # Добавляем услугу для корректного создания записи
+    service_success, _, service = await db.add_service(
+        name="Тест",
+        description="Описание тестовой услуги", 
+        price="1000",
+        duration=60,
+        is_active=True
+    )
+    assert service_success
+    appointment_time = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     success, _, appointment = await db.add_appointment(
         client_id=test_client.id,
-        service_type="Тест",
+        service_type=service.name,  # используем service.name, т.е. "Тест"
         car_info="Toyota Camry",
         appointment_time=appointment_time
     )
     assert success
-
-    # Проверяем изменение статусов
-    statuses = [
-        AppointmentStatus.CONFIRMED,
-        AppointmentStatus.COMPLETED,
-        AppointmentStatus.CANCELLED
-    ]
-
+    statuses = [ "confirmed", "completed", "cancelled" ]
     for status in statuses:
-        success, error = await db.update_appointment_status(
-            appointment.id,
-            status
-        )
+        success, error = await db.update_appointment_status(appointment.id, status)
         assert success
         assert error is None
-
-        # Проверяем, что статус обновился
         updated_appointment = await db.get_appointment(appointment.id)
-        assert updated_appointment.status == status
+        assert updated_appointment.status.value == status
 
-# Тесты создания транзакции
+
+@pytest.mark.asyncio
 async def test_create_transaction(db):
     success, error, transaction = await db.add_transaction(
         amount="1000.50",
@@ -92,17 +86,27 @@ async def test_create_transaction(db):
         category="Услуги",
         description="Тестовая транзакция"
     )
-
     assert success
     assert error is None
     assert transaction is not None
+    from decimal import Decimal
     assert transaction.amount == Decimal("1000.50")
-    assert transaction.type == "income"
+    assert transaction.type.value == "income"
 
-# Тесты валидации временных слотов
+@pytest.mark.asyncio
 async def test_appointment_time_validation(db, test_client):
     appointment_time = datetime.now() + timedelta(days=1)
     
+    # Добавляем услугу с именем "Тест" для успешного поиска
+    service_success, service_error, service = await db.add_service(
+        name="Тест",
+        description="Описание тестовой услуги",
+        price="1000",
+        duration=60,
+        is_active=True
+    )
+    assert service_success, f"Ошибка добавления услуги: {service_error}"
+
     # Создаем первую запись
     success1, _, _ = await db.add_appointment(
         client_id=test_client.id,

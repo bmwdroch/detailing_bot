@@ -96,11 +96,12 @@ def test_invalid_car_info():
 # Тесты для validate_appointment_time
 def test_valid_appointment_times():
     now = datetime.now()
+    base_time = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     valid_times = [
-        now + timedelta(hours=2),
-        now + timedelta(days=1),
-        now + timedelta(days=7),
-        now.replace(hour=10, minute=0) + timedelta(days=1)
+        base_time + timedelta(hours=2),
+        base_time + timedelta(days=1),
+        base_time + timedelta(days=7),
+        base_time + timedelta(days=1)
     ]
     for time in valid_times:
         is_valid, error = validate_appointment_time(time)

@@ -10,8 +10,6 @@ from decimal import Decimal
 from typing import Optional, Tuple
 
 from core.models import AppointmentStatus, TransactionType
-from services.db.database_manager import DatabaseManager
-
 
 def validate_phone(phone: str) -> Tuple[bool, Optional[str]]:
     """
@@ -23,7 +21,7 @@ def validate_phone(phone: str) -> Tuple[bool, Optional[str]]:
     - 8 XXX XXX XX XX
     """
     # Убираем все пробелы и дефисы
-    phone = re.sub(r'[\s\-]', '', phone)
+    phone = re.sub(r'[\s\-()]', '', phone)
     
     # Проверяем базовый формат
     if not re.match(r'^(?:\+7|8)\d{10}$', phone):
@@ -64,17 +62,18 @@ def validate_car_info(car_info: str) -> Tuple[bool, Optional[str]]:
     - От 4 символов
     - Буквы, цифры, пробелы, дефисы
     """
-    # Убираем лишние пробелы
-    car_info = ' '.join(car_info.split())
+    car_info = car_info.strip()
     
     if len(car_info) < 4:
         return False, "Слишком короткое описание автомобиля"
     
+    if len(car_info) > 100:
+        return False, "Слишком длинное описание автомобиля"
+        
     if not re.match(r'^[а-яА-ЯёЁa-zA-Z0-9\s\-\.]+$', car_info):
         return False, "Недопустимые символы в описании автомобиля"
     
     return True, None
-
 
 def validate_appointment_time(time: datetime) -> Tuple[bool, Optional[str]]:
     """
@@ -86,20 +85,19 @@ def validate_appointment_time(time: datetime) -> Tuple[bool, Optional[str]]:
     """
     now = datetime.now()
     
-    # Проверяем что время в будущем
     if time <= now:
         return False, "Время записи должно быть в будущем"
     
-    # Проверяем минимальное время
     if time < now + timedelta(hours=1):
         return False, "Запись возможна минимум за 1 час"
     
-    # Проверяем максимальное время
     if time > now + timedelta(days=90):
         return False, "Запись возможна максимум за 3 месяца"
     
-    # Проверяем рабочие часы
     if time.hour < 9 or time.hour >= 20:
+        return False, "Запись возможна только с 9:00 до 20:00"
+    
+    if not (9 <= time.hour < 20):
         return False, "Запись возможна только с 9:00 до 20:00"
     
     return True, None
@@ -112,14 +110,14 @@ def validate_amount(amount: str) -> Tuple[bool, Optional[str]]:
     - Максимум 2 знака после запятой
     """
     try:
-        # Пробуем преобразовать в Decimal
-        amount_decimal = Decimal(amount)
+        amount_decimal = Decimal(str(amount))
         
-        # Проверяем знак
         if amount_decimal <= 0:
             return False, "Сумма должна быть больше нуля"
-        
-        # Проверяем количество знаков после запятой
+            
+        if amount_decimal > Decimal("999999999.99"):
+            return False, "Сумма слишком большая"
+            
         decimal_places = abs(amount_decimal.as_tuple().exponent)
         if decimal_places > 2:
             return False, "Максимум 2 знака после запятой"
@@ -271,50 +269,3 @@ def validate_service_duration(duration: int) -> Tuple[bool, Optional[str]]:
         return True, None
     except:
         return False, "Неверный формат длительности"
-    
-async def validate_appointment_time_conflicts(
-    db: DatabaseManager,
-    appointment_time: datetime,
-    duration: int,
-    exclude_id: Optional[int] = None
-) -> Tuple[bool, Optional[str]]:
-    """
-    Проверка времени записи на пересечение с другими записями
-    
-    Args:
-        db: менеджер базы данных
-        appointment_time: время записи
-        duration: длительность в минутах
-        exclude_id: ID записи для исключения из проверки
-        
-    Returns:
-        (успех, текст ошибки)
-    """
-    # Получаем все записи на эту дату
-    date_appointments = await db.get_appointments_by_date(
-        appointment_time.date()
-    )
-    
-    # Время окончания новой записи
-    end_time = appointment_time + timedelta(minutes=duration)
-    
-    # Проверяем пересечения
-    for apt in date_appointments:
-        # Пропускаем запись, если указан exclude_id
-        if exclude_id and apt.id == exclude_id:
-            continue
-            
-        # Пропускаем отмененные записи
-        if apt.status == AppointmentStatus.CANCELLED:
-            continue
-            
-        apt_end_time = apt.appointment_time + timedelta(
-            minutes=apt.service_duration
-        )
-        
-        # Проверяем пересечение временных интервалов
-        if (appointment_time < apt_end_time and 
-            end_time > apt.appointment_time):
-            return False, "Выбранное время пересекается с другой записью"
-    
-    return True, None

@@ -4,4 +4,4 @@ python-dotenv>=1.0
 pytz>=2023.3
 pytest>=7.0
 pytest-asyncio>=0.21.0
-yaml
+anyio

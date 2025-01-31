@@ -2,6 +2,7 @@ import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+@pytest.mark.asyncio
 async def test_daily_stats(services, test_appointment):
     """Тест получения дневной статистики"""
     stats = await services['analytics'].get_daily_stats(
@@ -13,6 +14,7 @@ async def test_daily_stats(services, test_appointment):
     assert 'finances' in stats
     assert stats['appointments']['total'] > 0
 
+@pytest.mark.asyncio
 async def test_period_stats(services, test_appointment):
     """Тест получения статистики за период"""
     start_date = test_appointment.appointment_time - timedelta(days=1)
@@ -25,22 +27,27 @@ async def test_period_stats(services, test_appointment):
     assert 'average' in stats
     assert stats['total']['appointments'] > 0
 
+@pytest.mark.asyncio
 async def test_popular_services(services, test_appointment):
     """Тест получения популярных услуг"""
+    # Обновляем статус записи, чтобы она попала в выборку (выбираются только completed)
+    await services['db'].update_appointment_status(test_appointment.id, "completed")
+    
     start_date = test_appointment.appointment_time - timedelta(days=30)
     end_date = test_appointment.appointment_time + timedelta(days=30)
-    
-    services = await services['analytics'].get_popular_services(
+
+    pop_services = await services['analytics'].get_popular_services(
         start_date, 
         end_date,
         limit=5
     )
     
-    assert isinstance(services, list)
-    assert len(services) > 0
-    assert 'service_id' in services[0]
-    assert 'count' in services[0]
+    assert isinstance(pop_services, list)
+    assert len(pop_services) > 0
+    assert 'service_id' in pop_services[0]
+    assert 'count' in pop_services[0]
 
+@pytest.mark.asyncio
 async def test_busy_hours(services, test_appointment):
     """Тест получения загруженности по часам"""
     start_date = test_appointment.appointment_time - timedelta(days=1)

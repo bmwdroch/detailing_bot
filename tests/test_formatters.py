@@ -55,17 +55,17 @@ def test_format_datetime():
 
 # Тесты для относительных дат
 def test_format_relative_date():
-    now = datetime.now()
+    fixed_now = datetime(2025, 1, 31, 12, 0, 0)
     test_cases = [
-        (now + timedelta(minutes=30), "через 30 минут"),
-        (now + timedelta(hours=2), "через 2 часов"),
-        (now + timedelta(days=1), "завтра в 14:30"),
-        (now - timedelta(hours=1), "1 часов назад"),
-        (now - timedelta(days=1), "вчера в 14:30"),
+        (fixed_now + timedelta(minutes=30), "через 30 минут"),
+        (fixed_now + timedelta(hours=2), "через 2 часов"),
+        ((fixed_now.replace(hour=14, minute=30) + timedelta(days=1)), "завтра в 14:30"),
+        (fixed_now - timedelta(hours=1), "1 часов назад"),
+        ((fixed_now.replace(hour=14, minute=30) - timedelta(days=1)), "вчера в 14:30"),
     ]
     for dt, expected in test_cases:
-        dt = dt.replace(hour=14, minute=30)
-        assert format_relative_date(dt).startswith(expected.split(' в')[0])
+        result = format_relative_date(dt, now=fixed_now)
+        assert result.startswith(expected.split(' в')[0])
 
 # Тесты для форматирования статусов
 def test_format_appointment_status():

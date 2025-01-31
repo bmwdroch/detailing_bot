@@ -68,10 +68,11 @@ async def test_service(test_db) -> Service:
 @pytest.fixture
 async def test_appointment(test_db, test_client, test_service) -> Appointment:
     """Создает тестовую запись"""
-    appointment_time = datetime.now() + timedelta(days=1)
+    # Задаём время с завтрашним днем, но устанавливаем допустимый час (например, 10:00)
+    appointment_time = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     success, _, appointment = await test_db.add_appointment(
         client_id=test_client.id,
-        service_id=test_service.id,
+        service_id=test_service.id,  # теперь поддерживается
         car_info="Test Car",
         appointment_time=appointment_time,
         comment="Test comment"

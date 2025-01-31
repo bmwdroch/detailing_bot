@@ -24,7 +24,7 @@ def sample_client_data():
 
 @pytest.fixture
 def sample_appointment_data():
-    base_date = datetime.now() + timedelta(days=1)
+    base_date = (datetime.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     return [
         {
             "service_type": f"Service {i % 5}",
@@ -34,7 +34,8 @@ def sample_appointment_data():
         }
         for i in range(1000)
     ]
-
+    
+@pytest.mark.asyncio
 async def test_concurrent_client_creation(test_db, sample_client_data):
     """Тест параллельного создания клиентов"""
     
@@ -53,7 +54,8 @@ async def test_concurrent_client_creation(test_db, sample_client_data):
     # Проверяем, что все клиенты сохранены
     all_clients = await test_db.get_all_clients()
     assert len(all_clients) == success_count
-
+    
+@pytest.mark.asyncio
 async def test_concurrent_appointments(test_db, sample_client_data, sample_appointment_data):
     """Тест параллельного создания записей"""
     
@@ -64,6 +66,17 @@ async def test_concurrent_appointments(test_db, sample_client_data, sample_appoi
         phone="+79991234567"
     )
     assert success
+
+    # Добавляем услуги для всех возможных service_type ("Service 0" ... "Service 4")
+    for i in range(5):
+        s_success, s_error, _ = await test_db.add_service(
+            name=f"Service {i}",
+            description="Test service",
+            price="1000",
+            duration=60,
+            is_active=True
+        )
+        assert s_success, f"Ошибка добавления услуги Service {i}: {s_error}"
 
     async def create_appointment(data):
         return await test_db.add_appointment(
@@ -78,7 +91,8 @@ async def test_concurrent_appointments(test_db, sample_client_data, sample_appoi
     # Проверяем результаты
     success_count = sum(1 for success, _, _ in results if success)
     assert success_count > 0
-
+    
+@pytest.mark.asyncio
 async def test_database_recovery(test_db):
     """Тест восстановления после сбоя БД"""
     
@@ -105,6 +119,7 @@ async def test_database_recovery(test_db):
     
     assert success
 
+@pytest.mark.asyncio
 async def test_high_load_queries(test_db):
     """Тест производительности при большом количестве запросов"""
     
