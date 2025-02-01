@@ -36,8 +36,8 @@ class Service:
             price=Decimal(str(row[3])),
             duration=row[4],
             is_active=bool(row[5]),
-            created_at=datetime.strptime(row[6], "%Y-%m-%d %H:%M:%S"),
-            updated_at=datetime.strptime(row[7], "%Y-%m-%d %H:%M:%S")
+            created_at=datetime.fromisoformat(row[6]),
+            updated_at=datetime.fromisoformat(row[7])
         )
 
 @dataclass
@@ -55,7 +55,7 @@ class Client:
             telegram_id=row[1],
             name=row[2],
             phone=row[3],
-            created_at=datetime.strptime(row[4], "%Y-%m-%d %H:%M:%S")
+            created_at=datetime.fromisoformat(row[4])
         )
 
 @dataclass
@@ -80,10 +80,10 @@ class Appointment:
             client_id=row[1],
             service_id=row[2],
             car_info=row[3],
-            appointment_time=datetime.strptime(row[4], "%Y-%m-%d %H:%M:%S"),
+            appointment_time=datetime.fromisoformat(row[4]),
             status=AppointmentStatus(row[5]),
             comment=row[6],
-            created_at=datetime.strptime(row[7], "%Y-%m-%d %H:%M:%S")
+            created_at=datetime.fromisoformat(row[7])
         )
         if len(row) >= 10:
             base.service_name = row[8]
@@ -111,5 +111,5 @@ class Transaction:
             type=TransactionType(row[3]),
             category=row[4],
             description=row[5],
-            created_at=datetime.strptime(row[6], "%Y-%m-%d %H:%M:%S")
+            created_at=datetime.fromisoformat(row[6])
         )

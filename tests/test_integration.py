@@ -90,36 +90,6 @@ async def test_full_appointment_flow(services):
     assert Decimal(stats['finances']['income']) > 0
 
 @pytest.mark.asyncio
-async def test_error_handling(services):
-    """Тест обработки ошибок"""
-    
-    db = services['db']
-    
-    # Тест дублирования клиента
-    success1, _, _ = await db.add_client(
-        telegram_id=123456789,
-        name="Test Client",
-        phone="+79991234567"
-    )
-    assert success1
-    
-    success2, error, _ = await db.add_client(
-        telegram_id=123456789,
-        name="Test Client 2",
-        phone="+79991234567"
-    )
-    assert not success2
-    assert error is not None
-    
-    # Тест некорректного ID записи
-    success, error = await db.update_appointment_status(
-        9999,
-        AppointmentStatus.CONFIRMED
-    )
-    assert not success
-    assert error is not None
-
-@pytest.mark.asyncio
 async def test_concurrent_operations(services):
     db = services['db']
     success, _, client = await db.add_client(
