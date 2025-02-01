@@ -20,12 +20,15 @@ from utils.formatters import format_appointment_info, format_phone
 from utils.keyboards import (
     get_appointment_actions_keyboard,
     get_cancel_keyboard,
+    get_cancel_menu_keyboard,
     get_confirmation_keyboard,
     get_date_selection_keyboard,
     get_main_menu_keyboard,
     get_phone_keyboard,
     get_services_keyboard,
     get_time_selection_keyboard,
+    get_payment_menu_keyboard,
+    get_admin_menu_keyboard
 )
 from utils.validators import (
     validate_car_info,
@@ -112,18 +115,25 @@ async def cmd_start(
 
 
 @router.message(Command("cancel"))
-@router.message(F.text == "❌ Отменить")
+@router.message(F.text.in_(["❌ Отменить", "🏠 Главное меню"]))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
-    """
-    Отмена текущего действия и возврат в главное меню
-    """
     current_state = await state.get_state()
-    if current_state is not None:
+    if current_state is None:
+        await message.answer("Нет активного процесса.", reply_markup=get_main_menu_keyboard())
+        return
+
+    if current_state.startswith("ClientStates"):
         await state.clear()
-    await message.answer(
-        "Действие отменено",
-        reply_markup=get_main_menu_keyboard()
-    )
+        await message.answer("Действие отменено.", reply_markup=get_main_menu_keyboard())
+    elif current_state.startswith("PaymentStates"):
+        await state.clear()
+        await message.answer("Действие отменено.", reply_markup=get_payment_menu_keyboard())
+    elif current_state.startswith("AdminStates"):
+        await state.clear()
+        await message.answer("Действие отменено.", reply_markup=get_admin_menu_keyboard())
+    else:
+        await state.clear()
+        await message.answer("Действие отменено.", reply_markup=get_main_menu_keyboard())
 
 
 @router.message(ClientStates.ENTER_NAME)
@@ -346,7 +356,7 @@ async def process_time_selection(
         return
     
     # Получаем выбранное время
-    time_str = callback.data.split(":")[1]
+    time_str = callback.data.split(":", 1)[1]
     
     # Сохраняем выбранное время
     data = await state.get_data()
@@ -376,10 +386,11 @@ async def process_car_info(
     if not is_valid:
         await message.answer(
             f"Ошибка: {error}\n"
-            "Пожалуйста, введите информацию об автомобиле:"
+            "Пожалуйста, введите информацию об автомобиле:",
+            reply_markup=get_cancel_menu_keyboard()
         )
         return
-    
+        
     # Сохраняем информацию об автомобиле
     data = await state.get_data()
     appointment: AppointmentData = data["appointment"]
@@ -426,7 +437,6 @@ async def show_appointment_confirmation(
     )
     await state.set_state(ClientStates.CONFIRM_APPOINTMENT)
 
-
 @router.callback_query(ClientStates.CONFIRM_APPOINTMENT)
 async def process_appointment_confirmation(
     callback: CallbackQuery,
@@ -435,38 +445,43 @@ async def process_appointment_confirmation(
     notifications: NotificationService
 ) -> None:
     """
-    Обработка подтверждения создания записи
+    Обработка подтверждения создания записи.
+    Если пользователь нажал "cancel" – отменяем, иначе создаём запись.
     """
     if callback.data == "cancel":
         await state.clear()
-        await callback.message.edit_text(
-            "Запись отменена",
+        # Убираем inline-клавиатуру, вместо передачи ReplyKeyboardMarkup
+        await callback.message.edit_text("Запись отменена", reply_markup=None)
+        # Отправляем новое сообщение с основным меню (ReplyKeyboardMarkup допустима при отправке нового сообщения)
+        await callback.bot.send_message(
+            callback.message.chat.id,
+            "Главное меню",
             reply_markup=get_main_menu_keyboard()
         )
         return
-        
-    # Получаем данные записи
+
+    # Получаем данные записи из состояния
     data = await state.get_data()
     appointment_data: AppointmentData = data["appointment"]
-    
-    # Получаем клиента
-    client = await get_client(callback.message, db)
+
+    # Исправление: получаем клиента по callback.from_user.id
+    client = await db.get_client(callback.from_user.id)
     if not client:
         await callback.message.edit_text(
-            "Ошибка: клиент не найден.\n"
-            "Пожалуйста, начните запись заново через /start"
+            "Ошибка: клиент не найден.\nПожалуйста, начните запись заново через /start",
+            reply_markup=None
         )
         await state.clear()
         return
-    
+
     # Формируем дату и время записи
     time_parts = appointment_data.time.split(":")
     appointment_time = appointment_data.date.replace(
         hour=int(time_parts[0]),
         minute=int(time_parts[1])
     )
-    
-    # Создаем запись
+
+    # Создаем запись в БД
     success, error, appointment = await db.add_appointment(
         client_id=client.id,
         service_type=appointment_data.service_name,
@@ -474,30 +489,37 @@ async def process_appointment_confirmation(
         appointment_time=appointment_time,
         comment=appointment_data.comment
     )
-    
+
     if not success:
         await callback.message.edit_text(
-            f"Ошибка при создании записи: {error}\n"
-            "Пожалуйста, попробуйте позже.",
-            reply_markup=get_main_menu_keyboard()
+            f"Ошибка при создании записи: {error}\nПожалуйста, попробуйте позже.",
+            reply_markup=None
         )
         await state.clear()
         return
-    
-    # Отправляем уведомления
+
+    # Отправляем уведомления (например, администратору и клиенту)
+    admin_chat_id = callback.bot.config.admin_ids[0] if callback.bot.config.admin_ids else None
     await notifications.notify_new_appointment(
         appointment=appointment,
         client=client,
-        admin_chat_id=int(callback.bot.config.admin_chat_id)
+        admin_chat_id=admin_chat_id
     )
-    
-    # Завершаем процесс
+
+    # Редактируем сообщение – убираем inline‑клавиатуру
     await callback.message.edit_text(
-        "✅ Запись успешно создана!\n"
-        "Мы свяжемся с вами для подтверждения.",
+        "✅ Запись успешно создана!\nМы свяжемся с вами для подтверждения.",
+        reply_markup=None
+    )
+    # Отправляем новое сообщение с основным меню
+    await callback.bot.send_message(
+        callback.message.chat.id,
+        "Главное меню",
         reply_markup=get_main_menu_keyboard()
     )
+
     await state.clear()
+
 
 @router.message(Command("contacts"))
 @router.message(F.text == "📞 Контакты")

@@ -1,8 +1,4 @@
-"""
-Основной файл бота. 
-Содержит инициализацию всех компонентов и запуск бота.
-"""
-
+# main.py
 import asyncio
 import logging
 import sys
@@ -11,6 +7,7 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
 from config.config import Config
@@ -29,7 +26,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("bot.log"),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -123,42 +119,33 @@ async def check_reminders(services: dict) -> None:
     """
     while True:
         try:
-            # Получаем ближайшие записи
             now = datetime.now()
             end_date = now + timedelta(days=2)
-            
-            appointments = await services["db"].get_appointments_by_date_range(
-                now, end_date
-            )
-            
-            # Получаем клиентов
+            appointments = await services["db"].get_appointments_by_date_range(now, end_date)
             client_ids = {a.client_id for a in appointments}
             clients = {}
             for client_id in client_ids:
                 client = await services["db"].get_client_by_id(client_id)
                 if client:
                     clients[client_id] = client
-                    
-            # Отправляем напоминания
-            await services["notifications"].check_and_send_reminders(
-                appointments,
-                clients
-            )
-            
+            await services["notifications"].check_and_send_reminders(appointments, clients)
         except Exception as e:
             logger.error(f"Error checking reminders: {e}")
-            
-        # Проверяем каждые 30 минут
         await asyncio.sleep(1800)
 
 async def main() -> None:
     """Точка входа"""
+    bot = None  # Инициализируем bot заранее
+    reminder_task = None
     try:
         # Загружаем конфигурацию
         config = Config()
         
-        # Создаем объект бота
-        bot = Bot(token=config.bot_token, parse_mode=ParseMode.HTML)
+        # Создаем объект бота, используя DefaultBotProperties для установки parse_mode
+        bot = Bot(
+            token=config.bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        )
         bot.config = config
         
         # Инициализируем диспетчер
@@ -168,7 +155,7 @@ async def main() -> None:
         services = await setup_services(bot)
         
         # Регистрируем мидлвари
-        await setup_middlewares(dp, config)
+        await setup_middlewares(dp, config, services)
         
         # Регистрируем обработчики
         await register_handlers(dp)
@@ -187,10 +174,11 @@ async def main() -> None:
     except Exception as e:
         logger.critical(f"Error starting bot: {e}")
         sys.exit(1)
-        
     finally:
-        reminder_task.cancel()  # Отменяем задачу при выходе
-        await bot.session.close()
+        if reminder_task is not None:
+            reminder_task.cancel()  # Отменяем задачу при выходе
+        if bot is not None:
+            await bot.session.close()
 
 if __name__ == "__main__":
     try:

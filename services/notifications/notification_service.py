@@ -257,6 +257,28 @@ class NotificationService:
                 
         await self.send_message(admin_chat_id, text)
 
+    async def notify_new_transaction(
+        self,
+        transaction: Transaction,
+        admin_chat_id: int
+    ) -> None:
+        """
+        Уведомление о новой транзакции для администратора.
+
+        Args:
+            transaction: объект Transaction
+            admin_chat_id: ID чата администратора
+        """
+        text = (
+            "🆕 Новая транзакция:\n\n"
+            f"Сумма: {format_money(transaction.amount)}\n"
+            f"Тип: {transaction.type.value}\n"
+            f"Категория: {transaction.category}\n"
+            f"Описание: {transaction.description}\n"
+            f"Дата: {format_datetime(transaction.created_at)}"
+        )
+        await self.send_message(admin_chat_id, text)
+
     async def check_and_send_reminders(
         self,
         appointments: List[Appointment],

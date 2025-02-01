@@ -5,3 +5,4 @@
 /src.txt
 *.pyc
 test_output.txt
+*.log

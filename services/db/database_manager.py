@@ -1,3 +1,4 @@
+# services/db/database_manager.py
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -25,6 +26,8 @@ class DatabaseManager:
     async def init_db(self) -> None:
         try:
             self.conn = await aiosqlite.connect(self.database_path)
+            # Настраиваем row_factory, чтобы получать строки в виде кортежей:
+            self.conn.row_factory = lambda cursor, row: row
             await self.conn.execute("PRAGMA foreign_keys = ON;")
             await self.conn.execute(ClientQueries.CREATE_TABLE)
             await self.conn.execute(ServiceQueries.CREATE_TABLE)
@@ -42,9 +45,10 @@ class DatabaseManager:
                 "Время работы: 9:00 - 20:00\n\n"
                 "Для записи используйте бот или звоните администраторам."
             )
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             await self.conn.execute(
                 SettingsQueries.INSERT,
-                ("contacts", default_contacts, datetime.now())
+                ("contacts", default_contacts, now_str)
             )
             await self.conn.commit()
             self.logger.info("Database initialized successfully.")
@@ -81,9 +85,10 @@ class DatabaseManager:
             raise RuntimeError("Database not initialized.")
 
         try:
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             await self.conn.execute(
                 SettingsQueries.UPDATE,
-                (value, datetime.now(), key)
+                (value, now_str, key)
             )
             await self.conn.commit()
             return True, None
@@ -131,7 +136,7 @@ class DatabaseManager:
             except Exception as e:
                 self.logger.error(f"Error adding client: {e}")
                 return False, "Ошибка при добавлении клиента", None
-            
+
     async def get_client(self, telegram_id: int) -> Optional[Client]:
         """Получение клиента по telegram_id."""
         if not self.conn:
@@ -177,7 +182,6 @@ class DatabaseManager:
             self.logger.error(f"Error getting all clients: {e}")
             return []
 
-
     async def add_appointment(
         self,
         client_id: int,
@@ -203,7 +207,7 @@ class DatabaseManager:
                 return False, err, None
 
         try:
-            # Разрешаем получение service_id: если он передан – используем его, иначе пытаемся определить по service_type.
+            # Определяем service_id
             if service_id is None:
                 if service_type is None:
                     return False, "Не указана услуга", None
@@ -228,12 +232,10 @@ class DatabaseManager:
                         return False, "Услуга (name) не найдена", None
                     service_id = srow[0]
 
-            # Получаем объект услуги для определения длительности
             service = await self.get_service(service_id)
             if not service:
                 return False, "Услуга не найдена", None
 
-            # Перед вставкой проверяем пересечения по времени
             new_end_time = appointment_time + timedelta(minutes=service.duration)
             existing_appointments = await self.get_appointments_by_date(appointment_time)
             for apt in existing_appointments:
@@ -248,10 +250,12 @@ class DatabaseManager:
                     return False, "Выбранное время пересекается с другой записью", None
 
             now = datetime.now()
+            now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+            appointment_time_str = appointment_time.strftime("%Y-%m-%d %H:%M:%S")
             status = "pending"
             await self.conn.execute(
                 AppointmentQueries.INSERT,
-                (client_id, service_id, car_info, appointment_time, status, comment, now)
+                (client_id, service_id, car_info, appointment_time_str, status, comment, now_str)
             )
             await self.conn.commit()
 
@@ -300,12 +304,10 @@ class DatabaseManager:
         if not self.conn:
             raise RuntimeError("Database not initialized.")
 
-        # Если статус передан как объект AppointmentStatus, преобразуем в строку
         from core.models import AppointmentStatus
         if isinstance(status, AppointmentStatus):
             status = status.value
 
-        # Валидируем статус
         is_valid, err = validate_status(status)
         if not is_valid:
             return False, err
@@ -323,35 +325,24 @@ class DatabaseManager:
             return False, "Ошибка при обновлении статуса"
 
     async def get_booked_times(self, date: datetime) -> List[datetime]:
-        """Возвращает список занятых времен (appointment_time) на указанную дату."""
         if not self.conn:
             raise RuntimeError("Database not initialized.")
         try:
-            cursor = await self.conn.execute(
-                AppointmentQueries.GET_BOOKED_TIMES,
-                (date,)
-            )
+            date_str = date.strftime("%Y-%m-%d")
+            cursor = await self.conn.execute(AppointmentQueries.GET_BOOKED_TIMES, (date_str,))
             rows = await cursor.fetchall()
             await cursor.close()
-            # rows — список кортежей вида [(2025-01-31 14:30:00, ), ...]
-            # конвертируем в datetime:
-            result = []
-            for (dt_str,) in rows:
-                result.append(datetime.fromisoformat(dt_str))
-            return result
+            return [datetime.fromisoformat(dt_str) for (dt_str,) in rows]
         except Exception as e:
             self.logger.error(f"Error getting booked times: {e}")
             return []
 
     async def get_appointments_by_date(self, date: datetime) -> List[Appointment]:
-        """Все записи за конкретную дату (с точностью до дня)."""
         if not self.conn:
             raise RuntimeError("Database not initialized.")
         try:
-            cursor = await self.conn.execute(
-                AppointmentQueries.GET_BY_DATE_RANGE,
-                (date, date)
-            )
+            date_str = date.strftime("%Y-%m-%d")
+            cursor = await self.conn.execute(AppointmentQueries.GET_BY_DATE_RANGE, (date_str, date_str))
             rows = await cursor.fetchall()
             await cursor.close()
             return [Appointment.from_db(r) for r in rows]
@@ -364,14 +355,12 @@ class DatabaseManager:
         start_date: datetime,
         end_date: datetime
     ) -> List[Appointment]:
-        """Все записи в диапазоне дат (включительно)."""
         if not self.conn:
             raise RuntimeError("Database not initialized.")
         try:
-            cursor = await self.conn.execute(
-                AppointmentQueries.GET_BY_DATE_RANGE,
-                (start_date, end_date)
-            )
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = end_date.strftime("%Y-%m-%d")
+            cursor = await self.conn.execute(AppointmentQueries.GET_BY_DATE_RANGE, (start_str, end_str))
             rows = await cursor.fetchall()
             await cursor.close()
             return [Appointment.from_db(r) for r in rows]
@@ -384,10 +373,10 @@ class DatabaseManager:
         if not self.conn:
             raise RuntimeError("Database not initialized.")
         try:
-            now = datetime.now()
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor = await self.conn.execute(
                 AppointmentQueries.GET_UPCOMING,
-                (now,)
+                (now_str,)
             )
             rows = await cursor.fetchall()
             await cursor.close()
@@ -424,7 +413,6 @@ class DatabaseManager:
         if not self.conn:
             raise RuntimeError("Database not initialized.")
 
-        # Валидация
         ok, err = validate_amount(amount)
         if not ok:
             return False, err, None
@@ -436,7 +424,6 @@ class DatabaseManager:
             return False, err, None
 
         try:
-            # Если указан appointment_id, проверим, есть ли такой
             if appointment_id is not None:
                 cursor = await self.conn.execute(
                     AppointmentQueries.GET_BY_ID, (appointment_id,)
@@ -453,7 +440,6 @@ class DatabaseManager:
                 (appointment_id, amount, type_, category, description, now_str)
             )
 
-            # Получаем последнюю транзакцию:
             cursor = await self.conn.execute("SELECT last_insert_rowid()")
             rowid = await cursor.fetchone()
             await cursor.close()
@@ -461,7 +447,6 @@ class DatabaseManager:
                 return False, "Ошибка при создании транзакции (no rowid)", None
             transaction_id = rowid[0]
 
-            # Читаем обратно
             cursor = await self.conn.execute(
                 TransactionQueries.GET_BY_ID,
                 (transaction_id,)
@@ -489,12 +474,9 @@ class DatabaseManager:
         if not self.conn:
             raise RuntimeError("Database not initialized.")
         try:
-            # берем start_date = date, end_date = date
-            # но внутри GET_BY_DATE_RANGE используется BETWEEN date(?) AND date(?)
-            # значит будет одна и та же дата
             cursor = await self.conn.execute(
                 TransactionQueries.GET_BY_DATE_RANGE,
-                (date, date)
+                (date.strftime("%Y-%m-%d"), date.strftime("%Y-%m-%d"))
             )
             rows = await cursor.fetchall()
             await cursor.close()
@@ -508,14 +490,12 @@ class DatabaseManager:
         start_date: datetime,
         end_date: datetime
     ) -> List[Transaction]:
-        """Транзакции за период (между start_date и end_date включительно)."""
         if not self.conn:
             raise RuntimeError("Database not initialized.")
         try:
-            cursor = await self.conn.execute(
-                TransactionQueries.GET_BY_DATE_RANGE,
-                (start_date, end_date)
-            )
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = end_date.strftime("%Y-%m-%d")
+            cursor = await self.conn.execute(TransactionQueries.GET_BY_DATE_RANGE, (start_str, end_str))
             rows = await cursor.fetchall()
             await cursor.close()
             return [Transaction.from_db(r) for r in rows]
@@ -523,7 +503,6 @@ class DatabaseManager:
             self.logger.error(f"Error getting transactions by date range: {e}")
             return []
 
-    # Пример методов пагинации, если нужно
     async def get_appointments_count(self) -> int:
         """Просто пример: общее число записей"""
         if not self.conn:
@@ -546,7 +525,7 @@ class DatabaseManager:
             query = """
             SELECT a.id, a.client_id, a.service_id, a.car_info,
                    a.appointment_time, a.status, a.comment, a.created_at,
-                   s.name as service_name, s.price as service_price
+                   s.name as service_name, s.price as service_price, s.duration as service_duration
             FROM appointments a
             JOIN services s ON a.service_id = s.id
             ORDER BY a.appointment_time DESC
@@ -572,7 +551,6 @@ class DatabaseManager:
         if not self.conn:
             raise RuntimeError("Database not initialized.")
 
-        # Валидация
         ok, err = validate_service_name(name)
         if not ok:
             return False, err, None
@@ -587,7 +565,6 @@ class DatabaseManager:
             return False, err, None
 
         try:
-            # Проверяем уникальность названия
             cursor = await self.conn.execute(
                 "SELECT id FROM services WHERE name = ?",
                 (name,)
@@ -598,18 +575,17 @@ class DatabaseManager:
                 return False, "Услуга с таким названием уже существует", None
 
             now = datetime.now()
+            now_str = now.strftime("%Y-%m-%d %H:%M:%S")
             await self.conn.execute(
                 ServiceQueries.INSERT,
-                (name, description, price, duration, is_active, now, now)
+                (name, description, price, duration, is_active, now_str, now_str)
             )
             await self.conn.commit()
 
-            # Берём последний rowid
             cursor = await self.conn.execute("SELECT last_insert_rowid()")
             (new_id,) = await cursor.fetchone()
             await cursor.close()
 
-            # Читаем
             cursor = await self.conn.execute(ServiceQueries.GET_BY_ID, (new_id,))
             srow = await cursor.fetchone()
             await cursor.close()

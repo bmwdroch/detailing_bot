@@ -76,13 +76,6 @@ def validate_car_info(car_info: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 def validate_appointment_time(time: datetime) -> Tuple[bool, Optional[str]]:
-    """
-    Валидация времени записи.
-    - Только будущее время
-    - Минимум через 1 час
-    - Максимум через 3 месяца
-    - Только в рабочие часы (9:00 - 20:00)
-    """
     now = datetime.now()
     
     if time <= now:
@@ -97,10 +90,8 @@ def validate_appointment_time(time: datetime) -> Tuple[bool, Optional[str]]:
     if time.hour < 9 or time.hour >= 20:
         return False, "Запись возможна только с 9:00 до 20:00"
     
-    if not (9 <= time.hour < 20):
-        return False, "Запись возможна только с 9:00 до 20:00"
-    
     return True, None
+
 
 
 def validate_amount(amount: str) -> Tuple[bool, Optional[str]]:

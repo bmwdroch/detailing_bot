@@ -28,18 +28,10 @@ def format_phone(phone: str) -> str:
     
     return f"+{digits[0]} ({digits[1:4]}) {digits[4:7]}-{digits[7:9]}-{digits[9:11]}"
 
-
-def format_money(amount: Union[Decimal, float, str]) -> str:
-    """
-    Форматирует денежную сумму
-    
-    Args:
-        amount: сумма как Decimal, float или строка
-        
-    Returns:
-        str: отформатированная сумма, например 1 234,56 ₽
-    """
-    if isinstance(amount, str):
+def format_money(amount: Union[Decimal, float, str, int]) -> str:
+    if isinstance(amount, int):
+        amount = Decimal(amount)
+    elif isinstance(amount, str):
         amount = Decimal(amount)
     elif isinstance(amount, float):
         amount = Decimal(str(amount))
@@ -53,7 +45,6 @@ def format_money(amount: Union[Decimal, float, str]) -> str:
         formatted = formatted[:-3]
     
     return f"{formatted} ₽"
-
 
 def format_date(dt: datetime) -> str:
     """

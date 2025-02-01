@@ -39,13 +39,15 @@ class AnalyticsService:
             # Получаем все записи за указанный день (по appointment_time)
             appointments = await self.db.get_appointments_by_date(date)
             # Получаем транзакции, связанные с записями, у которых appointment_time соответствует заданной дате
+            date_str = date.strftime("%Y-%m-%d")
             cursor = await self.db.conn.execute("""
-            SELECT id, appointment_id, amount, type, category, description, created_at
-            FROM transactions
-            WHERE appointment_id IN (
-                SELECT id FROM appointments WHERE date(appointment_time) = date(?)
-            )
-            """, (date,))
+                SELECT id, appointment_id, amount, type, category, description, created_at
+                FROM transactions
+                WHERE appointment_id IN (
+                    SELECT id FROM appointments WHERE date(appointment_time) = date(?)
+                )
+            """, (date_str,))
+                
             rows = await cursor.fetchall()
             await cursor.close()
             transactions = [Transaction.from_db(r) for r in rows]

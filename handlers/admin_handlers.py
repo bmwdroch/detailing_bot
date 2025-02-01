@@ -11,20 +11,22 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
-
+from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+)
 from core.models import AppointmentStatus, Service
 from services.analytics.analytics import AnalyticsService
 from services.db.database_manager import DatabaseManager
 from services.notifications.notification_service import NotificationService
 from utils.formatters import (
-    format_appointment_info, format_datetime, format_money,
-    format_service_info
+    format_appointment_info, format_datetime, format_money
 )
 from utils.keyboards import (
     get_admin_menu_keyboard, get_appointment_actions_keyboard,
-    get_cancel_keyboard, get_confirmation_keyboard,
-    get_pagination_keyboard, get_service_edit_keyboard
+    get_cancel_keyboard, get_confirmation_keyboard, get_main_menu_keyboard,
+    get_pagination_keyboard, get_service_confirmation_keyboard
 )
 from utils.validators import (
     validate_service_description, validate_service_duration,
@@ -158,12 +160,10 @@ async def cmd_admin(message: Message) -> None:
 
 
 @router.message(F.text == "👥 Все записи")
-async def cmd_all_appointments(
-    message: Message,
-    db: DatabaseManager,
-    state: FSMContext
-) -> None:
-    """Просмотр всех записей"""
+async def cmd_all_appointments(message: Message, db: DatabaseManager, state: FSMContext) -> None:
+    """
+    Выводит список всех записей с кнопками для выбора действий для каждой записи и с пагинацией.
+    """
     if not await check_admin(message):
         return
 
@@ -180,19 +180,33 @@ async def cmd_all_appointments(
         await message.answer("Записей не найдено")
         return
 
-    # Формируем текст со списком записей
-    text = "📅 Все записи:\n\n"
+    # Формируем текст – список записей (каждая запись форматируется стандартной функцией)
+    text_lines = ["📅 Все записи:"]
     for apt in appointments:
-        text += format_appointment_info(apt, include_client=True) + "\n\n"
+        text_lines.append(format_appointment_info(apt, include_client=True))
+    text = "\n\n".join(text_lines)
 
-    # Добавляем пагинацию
-    keyboard = get_pagination_keyboard(
-        page, total_pages, "appointments", per_page
-    )
+    # Формируем inline клавиатуру:
+    # 1. Для каждой записи добавляем кнопку «Действия для записи #ID»
+    keyboard_rows = []
+    for apt in appointments:
+        btn = InlineKeyboardButton(
+            text=f"Действия для записи #{apt.id}",
+            callback_data=f"appointment:actions:{apt.id}"
+        )
+        keyboard_rows.append([btn])
 
-    await message.answer(text, reply_markup=keyboard)
+    # 2. Добавляем строку с кнопками пагинации
+    pagination_kb = get_pagination_keyboard(page, total_pages, "appointments", per_page)
+    for row in pagination_kb.inline_keyboard:
+        keyboard_rows.append(row)
+
+    # 3. Добавляем кнопку закрытия
+    keyboard_rows.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="close")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    await message.answer(text, reply_markup=kb)
     await state.update_data(appointments_page=page)
-
 
 @router.message(F.text == "📝 Управление услугами")
 async def cmd_manage_services(
@@ -206,8 +220,8 @@ async def cmd_manage_services(
 
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            ["➕ Добавить услугу", "📋 Список услуг"],
-            ["❌ Отмена"]
+            [KeyboardButton(text="➕ Добавить услугу"), KeyboardButton(text="📋 Список услуг")],
+            [KeyboardButton(text="❌ Отмена")]
         ],
         resize_keyboard=True
     )
@@ -216,7 +230,6 @@ async def cmd_manage_services(
         "Выберите действие:",
         reply_markup=keyboard
     )
-
 
 @router.message(F.text == "➕ Добавить услугу")
 async def cmd_add_service(message: Message, state: FSMContext) -> None:
@@ -353,12 +366,11 @@ async def process_service_duration(
     await show_service_confirmation(message, service)
     await state.set_state(AdminStates.CONFIRM_SERVICE)
 
-
-async def show_service_confirmation(
-    message: Message,
-    service: ServiceData
-) -> None:
-    """Показ подтверждения создания услуги"""
+async def show_service_confirmation(message: Message, service: ServiceData) -> None:
+    """
+    Показывает данные услуги и запрашивает подтверждение с использованием
+    inline‑клавиатуры с уникальными callback_data.
+    """
     text = (
         "Подтвердите данные услуги:\n\n"
         f"Название: {service.name}\n"
@@ -367,33 +379,30 @@ async def show_service_confirmation(
         f"Длительность: {service.duration} мин.\n\n"
         "Всё верно?"
     )
-
-    await message.answer(
-        text,
-        reply_markup=get_confirmation_keyboard()
-    )
+    await message.answer(text, reply_markup=get_service_confirmation_keyboard())
 
 
-@router.callback_query(AdminStates.CONFIRM_SERVICE)
-async def process_service_confirmation(
-    callback: CallbackQuery,
-    state: FSMContext,
-    db: DatabaseManager
-) -> None:
-    """Обработка подтверждения создания услуги"""
-    if callback.data == "cancel":
+@router.callback_query(lambda c: c.data in ["service:confirm", "service:cancel"])
+async def process_service_confirmation(callback: CallbackQuery, state: FSMContext, db: DatabaseManager) -> None:
+    """
+    Обработка нажатия кнопок подтверждения/отмены при создании услуги.
+    Если нажата кнопка "service:cancel" – процесс отменяется.
+    Если "service:confirm" – данные услуги берутся из состояния и услуга добавляется в БД.
+    """
+    if callback.data == "service:cancel":
         await state.clear()
-        await callback.message.edit_text(
-            "Добавление услуги отменено",
-            reply_markup=None
-        )
+        await callback.message.edit_text("Добавление услуги отменено", reply_markup=None)
         return
 
-    # Получаем данные услуги
+    # Получаем данные услуги из состояния
     data = await state.get_data()
-    service: ServiceData = data["service"]
+    service: ServiceData = data.get("service")
+    if not service:
+        await callback.message.edit_text("Данные услуги не найдены. Начните процесс заново.", reply_markup=None)
+        await state.clear()
+        return
 
-    # Добавляем услугу в БД
+    # Добавляем услугу в базу данных
     success, error, _ = await db.add_service(
         name=service.name,
         description=service.description,
@@ -401,96 +410,96 @@ async def process_service_confirmation(
         duration=service.duration,
         is_active=service.is_active
     )
-
     if not success:
         await callback.message.edit_text(
-            f"Ошибка при создании услуги: {error}\n"
-            "Пожалуйста, попробуйте позже.",
+            f"Ошибка при создании услуги: {error}\nПожалуйста, попробуйте позже.",
             reply_markup=None
         )
         await state.clear()
         return
 
-    # Завершаем процесс
-    await callback.message.edit_text(
-        "✅ Услуга успешно добавлена!",
-        reply_markup=None
-    )
+    # Редактируем сообщение – убираем inline‑клавиатуру
+    await callback.message.edit_text("✅ Услуга успешно добавлена!", reply_markup=None)
+    # Отправляем новое сообщение с административным меню
+    await callback.bot.send_message(callback.message.chat.id, "Административное меню", reply_markup=get_admin_menu_keyboard())
     await state.clear()
 
-
-@router.callback_query(F.data.startswith("appointment:"))
-async def process_appointment_action(
-    callback: CallbackQuery,
-    db: DatabaseManager,
-    notifications: NotificationService
-) -> None:
-    """Обработка действий с записью"""
-    if not await check_admin(callback):
+@router.message(F.text == "📋 Список услуг")
+async def cmd_list_services(message: Message, db: DatabaseManager) -> None:
+    """Вывод списка услуг в административном режиме"""
+    if not await check_admin(message):
         return
 
-    # Разбираем callback data
-    _, action, appointment_id = callback.data.split(":")
-    appointment_id = int(appointment_id)
+    # Получаем список активных услуг (можно заменить на метод получения всех услуг, если требуется)
+    services_list = await db.get_active_services()
+    if not services_list:
+        await message.answer("Нет доступных услуг.", reply_markup=get_admin_menu_keyboard())
+        return
 
-    # Получаем запись
+    text = "📋 Список услуг:\n\n"
+    for service in services_list:
+        text += f"ID: {service.id} - {service.name} - {service.price} ₽ - {service.duration} мин\n"
+    await message.answer(text, reply_markup=get_admin_menu_keyboard())
+
+@router.callback_query(lambda c: c.data and c.data.startswith("appointment:") and "actions" not in c.data)
+async def process_appointment_action(callback: CallbackQuery, db: DatabaseManager, notifications: NotificationService) -> None:
+    """
+    Обрабатывает действия с записью: подтверждение, отмена, завершение и перенесение.
+    Обрабатывает callback data вида "appointment:confirm:<ID>", "appointment:cancel:<ID>", "appointment:complete:<ID>" и т.п.
+    """
+    # Разбираем callback data
+    try:
+        _, action, appointment_id = callback.data.split(":")
+        appointment_id = int(appointment_id)
+    except (IndexError, ValueError):
+        await callback.answer("Неверные данные", show_alert=True)
+        return
+
     appointment = await db.get_appointment(appointment_id)
     if not appointment:
-        await callback.answer("Запись не найдена")
+        await callback.answer("Запись не найдена", show_alert=True)
         return
 
-    # Получаем клиента
+    # Получаем клиента (например, для уведомлений)
     client = await db.get_client_by_id(appointment.client_id)
     if not client:
-        await callback.answer("Клиент не найден")
+        await callback.answer("Клиент не найден", show_alert=True)
         return
 
-    # Обрабатываем действие
     old_status = appointment.status
     if action == "confirm":
-        success, error = await db.update_appointment_status(
-            appointment_id,
-            AppointmentStatus.CONFIRMED
-        )
+        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.CONFIRMED)
     elif action == "cancel":
-        success, error = await db.update_appointment_status(
-            appointment_id,
-            AppointmentStatus.CANCELLED
-        )
+        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.CANCELLED)
     elif action == "complete":
-        success, error = await db.update_appointment_status(
-            appointment_id,
-            AppointmentStatus.COMPLETED
-        )
+        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.COMPLETED)
+    elif action == "reschedule":
+        # Если реализована логика переноса – добавить её здесь
+        await callback.answer("Функция переноса пока не реализована", show_alert=True)
+        return
     else:
-        await callback.answer("Неизвестное действие")
+        await callback.answer("Неизвестное действие", show_alert=True)
         return
 
     if not success:
-        await callback.answer(f"Ошибка: {error}")
+        await callback.answer(f"Ошибка: {error}", show_alert=True)
         return
 
-    # Получаем обновленную запись
+    # Обновляем запись
     appointment = await db.get_appointment(appointment_id)
     if not appointment:
-        await callback.answer("Запись не найдена")
+        await callback.answer("Запись не найдена", show_alert=True)
         return
 
-    # Отправляем уведомления
-    await notifications.notify_appointment_status_change(
-        appointment=appointment,
-        client=client,
-        old_status=old_status
-    )
-
-    # Обновляем сообщение
+    # Отправляем уведомление об изменении статуса (обработчик уже реализован)
+    await notifications.notify_appointment_status_change(appointment=appointment, client=client, old_status=old_status)
+    # Обновляем сообщение с новой информацией и кнопками действий
+    updated_kb = get_appointment_actions_keyboard(appointment_id, appointment.status)
     await callback.message.edit_text(
         format_appointment_info(appointment, include_client=True),
-        reply_markup=get_appointment_actions_keyboard(
-            appointment_id,
-            appointment.status
-        )
+        reply_markup=updated_kb
     )
+    await callback.answer()
 
 
 @router.message(F.text == "📈 Статистика")
@@ -678,3 +687,34 @@ async def cmd_broadcast(
         reply_markup=get_cancel_keyboard()
     )
     await state.set_state(BroadcastStates.ENTER_MESSAGE)
+
+@router.message(F.text == "❌ Отмена")
+async def admin_cancel(message: Message, state: FSMContext) -> None:
+    """
+    Обработка отмены в административном режиме.
+    Возвращает администратора в административное меню.
+    """
+    await state.clear()
+    await message.answer("Действие отменено.", reply_markup=get_admin_menu_keyboard())
+
+@router.callback_query(lambda c: c.data and c.data.startswith("appointment:actions:"))
+async def appointment_actions_callback(callback: CallbackQuery, db: DatabaseManager) -> None:
+    """
+    При нажатии на кнопку "Действия для записи #ID" выводит inline клавиатуру с конкретными действиями.
+    """
+    try:
+        parts = callback.data.split(":")
+        appointment_id = int(parts[2])
+    except (IndexError, ValueError):
+        await callback.answer("Неверные данные", show_alert=True)
+        return
+
+    appointment = await db.get_appointment(appointment_id)
+    if not appointment:
+        await callback.answer("Запись не найдена", show_alert=True)
+        return
+
+    actions_kb = get_appointment_actions_keyboard(appointment_id, appointment.status)
+    # Редактируем текущее сообщение, заменяя клавиатуру на действия для данной записи
+    await callback.message.edit_reply_markup(reply_markup=actions_kb)
+    await callback.answer()

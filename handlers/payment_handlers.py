@@ -2,7 +2,6 @@
 Модуль обработчиков команд для работы с транзакциями и кассой.
 Включает обработку команд для добавления транзакций, просмотра отчетов и управления финансами.
 """
-
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional
@@ -11,74 +10,60 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup, KeyboardButton
 from core.models import TransactionType
 from services.analytics.analytics import AnalyticsService
 from services.db.database_manager import DatabaseManager
+from services.notifications.notification_service import NotificationService
 from utils.formatters import format_money
 from utils.keyboards import (
     get_cancel_keyboard,
+    get_inline_cancel_keyboard, 
     get_confirmation_keyboard,
     get_main_menu_keyboard,
     get_transaction_type_keyboard,
 )
 from utils.validators import validate_amount, validate_category
 
-# Создаем роутер для платежных обработчиков
 router = Router(name="payment")
-
-# Настраиваем логгер
 logger = logging.getLogger(__name__)
 
-
 class PaymentStates(StatesGroup):
-    """Состояния FSM для работы с транзакциями"""
-    
     SELECT_TYPE = State()  # Выбор типа транзакции
     ENTER_AMOUNT = State()  # Ввод суммы
     ENTER_CATEGORY = State()  # Ввод категории
     ENTER_DESCRIPTION = State()  # Ввод описания
     CONFIRM_TRANSACTION = State()  # Подтверждение транзакции
 
-
 class TransactionData:
-    """Класс для хранения данных о транзакции в процессе создания"""
-    
     def __init__(self):
         self.type: Optional[TransactionType] = None
         self.amount: Optional[float] = None
         self.category: Optional[str] = None
         self.description: Optional[str] = None
 
-
 @router.message(Command("transactions"))
 @router.message(F.text == "💰 Касса")
 async def cmd_transactions(message: Message, state: FSMContext) -> None:
     """
-    Обработчик команды для работы с кассой
+    Обработчик команды для работы с кассой.
+    Используем ReplyKeyboardMarkup для нового сообщения.
     """
-    # Проверяем права администратора
     if not await check_admin_rights(message):
-        await message.answer(
-            "У вас нет прав для работы с кассой"
-        )
+        await message.answer("У вас нет прав для работы с кассой")
         return
 
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            ["➕ Добавить транзакцию"],
-            ["📊 Дневной отчет", "📈 Недельный отчет"],
-            ["📋 Месячный отчет", "🔍 Статистика"],
-            ["❌ Отмена"]
+            [KeyboardButton(text="➕ Добавить транзакцию")],
+            [KeyboardButton(text="📊 Дневной отчет"), KeyboardButton(text="📈 Недельный отчет")],
+            [KeyboardButton(text="📋 Месячный отчет")],  # удалена лишняя кнопка "🔍 Статистика"
+            [KeyboardButton(text="❌ Отмена")]
         ],
         resize_keyboard=True
     )
     
-    await message.answer(
-        "Выберите действие:",
-        reply_markup=keyboard
-    )
-
+    await message.answer("Выберите действие:", reply_markup=keyboard)
 
 @router.message(F.text == "➕ Добавить транзакцию")
 async def cmd_add_transaction(message: Message, state: FSMContext) -> None:
@@ -104,7 +89,8 @@ async def process_type_selection(
     state: FSMContext
 ) -> None:
     """
-    Обработка выбора типа транзакции
+    Обработка выбора типа транзакции.
+    При редактировании сообщения теперь используется inline‑клавиатура отмены.
     """
     if callback.data == "cancel":
         await state.clear()
@@ -117,20 +103,17 @@ async def process_type_selection(
     # Получаем тип транзакции из callback
     transaction_type = TransactionType(callback.data.split(":")[1])
     
-    # Сохраняем тип
     data = await state.get_data()
     transaction: TransactionData = data["transaction"]
     transaction.type = transaction_type
     await state.update_data(transaction=transaction)
 
-    # Запрашиваем сумму
+    # Запрашиваем сумму; используем inline‑клавиатуру отмены
     await callback.message.edit_text(
         "Введите сумму транзакции:",
-        reply_markup=get_cancel_keyboard()
+        reply_markup=get_inline_cancel_keyboard()
     )
     await state.set_state(PaymentStates.ENTER_AMOUNT)
-
-
 @router.message(PaymentStates.ENTER_AMOUNT)
 async def process_amount(message: Message, state: FSMContext) -> None:
     """
@@ -232,12 +215,12 @@ async def show_transaction_confirmation(
         reply_markup=get_confirmation_keyboard()
     )
 
-
 @router.callback_query(PaymentStates.CONFIRM_TRANSACTION)
 async def process_transaction_confirmation(
     callback: CallbackQuery,
     state: FSMContext,
-    db: DatabaseManager
+    db: DatabaseManager,
+    notifications: NotificationService  
 ) -> None:
     """
     Обработка подтверждения транзакции
@@ -255,7 +238,7 @@ async def process_transaction_confirmation(
     transaction: TransactionData = data["transaction"]
 
     # Добавляем транзакцию в БД
-    success, error, _ = await db.add_transaction(
+    success, error, transaction_obj = await db.add_transaction(
         amount=str(transaction.amount),
         type_=transaction.type.value,
         category=transaction.category,
@@ -271,14 +254,18 @@ async def process_transaction_confirmation(
         await state.clear()
         return
 
+    # Отправляем уведомление о новой транзакции в админку
+    admin_chat_id = callback.bot.config.admin_ids[0] if callback.bot.config.admin_ids else None
+    if admin_chat_id:
+        await notifications.notify_new_transaction(transaction_obj, admin_chat_id)
+
     # Завершаем процесс
     await callback.message.edit_text(
         "✅ Транзакция успешно добавлена!",
         reply_markup=None
     )
     await state.clear()
-
-
+    
 @router.message(F.text == "📊 Дневной отчет")
 async def cmd_daily_report(
     message: Message,
@@ -289,24 +276,18 @@ async def cmd_daily_report(
     Формирование дневного отчета
     """
     if not await check_admin_rights(message):
+        await message.answer("У вас нет прав для работы с кассой")
         return
 
-    # Получаем статистику за текущий день
-    today = datetime.now().replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     stats = await analytics.get_daily_stats(today)
 
-    if not stats:
-        await message.answer(
-            "Ошибка при формировании отчета"
-        )
+    if not stats or stats['appointments']['total'] == 0:
+        await message.answer("Нет записей за выбранный день.", reply_markup=get_main_menu_keyboard())
         return
 
-    # Формируем текст отчета
     report_text = format_daily_report(stats)
     await message.answer(report_text)
-
 
 @router.message(F.text == "📈 Недельный отчет")
 async def cmd_weekly_report(
@@ -411,26 +392,11 @@ def format_period_report(stats: Dict, period_name: str) -> str:
 
 
 async def check_admin_rights(message: Message) -> bool:
-    """
-    Проверка прав администратора
-    
-    Args:
-        message: объект сообщения от пользователя
-        
-    Returns:
-        bool: True если пользователь является администратором, False в противном случае
-    """
     try:
-        # Получаем ID пользователя
         user_id = message.from_user.id
-        
-        # Получаем список админов из конфига бота
         bot = message.bot
         admin_ids = bot.config.admin_ids
-        
-        # Проверяем, является ли пользователь администратором
         return user_id in admin_ids
-        
     except Exception as e:
         logger.error(f"Error checking admin rights: {e}")
         return False
