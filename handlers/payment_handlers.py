@@ -10,8 +10,13 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import CallbackQuery, Message
+from aiogram.types import (
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+)
 from core.models import TransactionType
+from services import db
 from services.analytics.analytics import AnalyticsService
 from services.db.database_manager import DatabaseManager
 from services.notifications.notification_service import NotificationService
@@ -21,6 +26,7 @@ from utils.keyboards import (
     get_inline_cancel_keyboard, 
     get_confirmation_keyboard,
     get_main_menu_keyboard,
+    get_services_keyboard,
     get_transaction_type_keyboard,
 )
 from utils.validators import validate_amount, validate_category
@@ -28,17 +34,21 @@ from utils.validators import validate_amount, validate_category
 router = Router(name="payment")
 logger = logging.getLogger(__name__)
 
+# В начале файла, в блоке импорта и определения состояний
 class PaymentStates(StatesGroup):
-    SELECT_TYPE = State()  # Выбор типа транзакции
-    ENTER_AMOUNT = State()  # Ввод суммы
-    ENTER_CATEGORY = State()  # Ввод категории
-    ENTER_DESCRIPTION = State()  # Ввод описания
-    CONFIRM_TRANSACTION = State()  # Подтверждение транзакции
+    SELECT_TYPE = State()         # Выбор типа транзакции
+    ENTER_AMOUNT = State()        # Ввод суммы
+    SELECT_SERVICE = State()      # Выбор услуги или "Другое"
+    ENTER_CATEGORY = State()      # Ввод категории (если выбрано "Другое")
+    ENTER_DESCRIPTION = State()   # Ввод описания
+    CONFIRM_TRANSACTION = State() # Подтверждение транзакции
 
 class TransactionData:
     def __init__(self):
         self.type: Optional[TransactionType] = None
         self.amount: Optional[float] = None
+        # Новое поле для хранения выбранной услуги (если выбрана)
+        self.service_id: Optional[int] = None  
         self.category: Optional[str] = None
         self.description: Optional[str] = None
 
@@ -114,10 +124,11 @@ async def process_type_selection(
         reply_markup=get_inline_cancel_keyboard()
     )
     await state.set_state(PaymentStates.ENTER_AMOUNT)
+
 @router.message(PaymentStates.ENTER_AMOUNT)
 async def process_amount(message: Message, state: FSMContext) -> None:
     """
-    Обработка ввода суммы
+    Обработка ввода суммы транзакции
     """
     amount = message.text.strip()
 
@@ -136,13 +147,21 @@ async def process_amount(message: Message, state: FSMContext) -> None:
     transaction.amount = float(amount)
     await state.update_data(transaction=transaction)
 
-    # Запрашиваем категорию
-    await message.answer(
-        "Введите категорию транзакции:",
-        reply_markup=get_cancel_keyboard()
+    # Получаем список активных услуг из БД
+    # Для этого нам понадобится доступ к объекту БД (DatabaseManager)
+    # (предполагается, что он передаётся как аргумент в обработчик)
+    services_list = await db.get_active_services()
+    # Можно использовать существующую функцию, адаптируя её (например, добавив кнопку "Другое")
+    keyboard = get_services_keyboard(services_list)
+    # Добавляем дополнительную кнопку "Другое" для ручного ввода категории
+    keyboard.inline_keyboard.append(
+        [InlineKeyboardButton(text="Другое", callback_data="service:other")]
     )
-    await state.set_state(PaymentStates.ENTER_CATEGORY)
-
+    await message.answer(
+        "Выберите услугу, к которой относится транзакция, или нажмите «Другое» для ввода своей категории:",
+        reply_markup=keyboard
+    )
+    await state.set_state(PaymentStates.SELECT_SERVICE)
 
 @router.message(PaymentStates.ENTER_CATEGORY)
 async def process_category(message: Message, state: FSMContext) -> None:

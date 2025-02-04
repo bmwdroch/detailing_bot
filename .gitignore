@@ -6,3 +6,4 @@
 *.pyc
 test_output.txt
 *.log
+data/database.sqlite

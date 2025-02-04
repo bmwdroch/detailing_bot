@@ -67,8 +67,7 @@ def get_admin_menu_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="👥 Все записи"), KeyboardButton(text="💰 Касса")],
             [KeyboardButton(text="📝 Управление услугами")],
-            [KeyboardButton(text="✏️ Изменить контакты")],
-            [KeyboardButton(text="❌ Отмена")]
+            [KeyboardButton(text="✏️ Изменить контакты")]
         ],
         resize_keyboard=True
     )

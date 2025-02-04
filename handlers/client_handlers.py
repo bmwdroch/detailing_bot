@@ -14,6 +14,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from core.models import AppointmentStatus, Client
+from handlers.payment_handlers import PaymentStates, TransactionData
 from services.db.database_manager import DatabaseManager
 from services.notifications.notification_service import NotificationService
 from utils.formatters import format_appointment_info, format_phone
@@ -32,6 +33,7 @@ from utils.keyboards import (
 )
 from utils.validators import (
     validate_car_info,
+    validate_category,
     validate_comment,
     validate_name,
     validate_phone,
@@ -92,20 +94,25 @@ async def cmd_start(
     state: FSMContext,
     db: DatabaseManager
 ) -> None:
-    """
-    Обработчик команды /start
-    """
-    # Проверяем регистрацию клиента
+    # Получаем конфигурацию (или можно обращаться к message.bot.config)
+    config = message.bot.config  # предполагается, что в Bot хранится config
+
+    # Если пользователь админ, сразу отправляем админское меню
+    if message.from_user.id in config.admin_ids:
+        await message.answer(
+            "Добро пожаловать, администратор!",
+            reply_markup=get_admin_menu_keyboard()
+        )
+        return
+
+    # Если пользователь не админ, продолжаем стандартный клиентский сценарий:
     client = await get_client(message, db)
-    
     if client:
-        # Клиент уже зарегистрирован
         await message.answer(
             f"С возвращением, {client.name}!",
             reply_markup=get_main_menu_keyboard()
         )
     else:
-        # Начинаем регистрацию
         await message.answer(
             "Добро пожаловать! Для начала работы нужно зарегистрироваться.\n"
             "Пожалуйста, введите ваше имя и фамилию:",
@@ -255,47 +262,120 @@ async def cmd_new_appointment(
     await state.update_data(appointment=AppointmentData())
 
 
-@router.callback_query(ClientStates.SELECT_SERVICE)
+@router.callback_query(PaymentStates.SELECT_SERVICE)
 async def process_service_selection(
     callback: CallbackQuery,
     state: FSMContext,
-    db: DatabaseManager
+    db: DatabaseManager  # если необходимо получить данные услуги из БД
 ) -> None:
     """
-    Обработка выбора услуги
+    Обработка выбора услуги для транзакции.
+    Если пользователь выбирает конкретную услугу, сохраняем её ID и устанавливаем категорию автоматически.
+    Если выбирается "Другое", переходим к вводу категории вручную.
     """
-    if callback.data == "cancel":
-        await state.clear()
-        await callback.message.edit_text("Запись отменена")
+    data = await state.get_data()
+    transaction: TransactionData = data["transaction"]
+
+    if callback.data == "service:other":
+        # Пользователь выбрал ввод категории вручную
+        await callback.message.edit_text(
+            "Пожалуйста, введите название категории транзакции:"
+        )
+        await state.set_state(PaymentStates.ENTER_CATEGORY)
         return
-    
-    # Получаем ID выбранной услуги
-    service_id = int(callback.data.split(":")[1])
-    
-    # Получаем информацию об услуге
+
+    # Иначе, предполагаем, что callback data имеет вид "service:<ID>"
+    try:
+        _, service_id_str = callback.data.split(":")
+        service_id = int(service_id_str)
+    except Exception:
+        await callback.answer("Неверный выбор. Попробуйте снова.", show_alert=True)
+        return
+
+    # Получаем информацию об услуге по service_id (например, для автоматической установки категории)
     service = await db.get_service(service_id)
     if not service:
-        await callback.message.edit_text(
-            "Ошибка: услуга не найдена.\n"
-            "Пожалуйста, начните запись заново."
-        )
+        await callback.answer("Выбранная услуга не найдена.", show_alert=True)
+        return
+
+    transaction.service_id = service_id
+    # Например, сохраняем название услуги как категорию транзакции
+    transaction.category = service.name
+    await state.update_data(transaction=transaction)
+
+    await callback.message.edit_text(
+        f"Вы выбрали услугу: {service.name}\n"
+        "Если хотите, можете изменить категорию в ручном режиме или продолжить.",
+    )
+    # Переходим к вводу описания транзакции
+    await callback.bot.send_message(
+        callback.message.chat.id,
+        "Введите описание транзакции:",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(PaymentStates.ENTER_DESCRIPTION)
+
+@router.callback_query(ClientStates.SELECT_SERVICE)
+async def process_service_selection_client(callback: CallbackQuery, state: FSMContext, db: DatabaseManager):
+    if callback.data == "cancel":
         await state.clear()
+        await callback.message.edit_text("Запись отменена", reply_markup=get_main_menu_keyboard())
+        return
+    try:
+        # Ожидаем, что callback.data имеет формат "service:<ID>"
+        _, service_id_str = callback.data.split(":")
+        service_id = int(service_id_str)
+    except Exception:
+        await callback.answer("Неверный выбор. Попробуйте снова.", show_alert=True)
         return
     
-    # Сохраняем выбранную услугу
+    # Здесь можно получить данные услуги, сохранить их в состоянии и перейти к следующему шагу
+    service = await db.get_service(service_id)
+    if not service:
+        await callback.answer("Выбранная услуга не найдена.", show_alert=True)
+        return
+    
+    # Пример сохранения выбранной услуги в состоянии
     data = await state.get_data()
-    appointment: AppointmentData = data["appointment"]
+    appointment: AppointmentData = data.get("appointment")
+    if appointment is None:
+        appointment = AppointmentData()
     appointment.service_id = service_id
     appointment.service_name = service.name
     await state.update_data(appointment=appointment)
-    
-    # Показываем календарь для выбора даты
+
+    # Перейти к следующему шагу – например, выбор даты:
     await callback.message.edit_text(
-        f"Вы выбрали: {service.name}\n"
-        "Теперь выберите удобную дату:",
+        "Выберите дату:",
         reply_markup=get_date_selection_keyboard(datetime.now())
     )
     await state.set_state(ClientStates.SELECT_DATE)
+
+
+@router.message(PaymentStates.ENTER_CATEGORY)
+async def process_manual_category(message: Message, state: FSMContext) -> None:
+    """
+    Обработка ввода категории вручную (если выбрано "Другое")
+    """
+    category = message.text.strip()
+    is_valid, error = validate_category(category)
+    if not is_valid:
+        await message.answer(
+            f"Ошибка: {error}\n"
+            "Пожалуйста, введите корректное название категории:"
+        )
+        return
+
+    data = await state.get_data()
+    transaction: TransactionData = data["transaction"]
+    transaction.category = category
+    await state.update_data(transaction=transaction)
+
+    await message.answer(
+        "Введите описание транзакции:",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(PaymentStates.ENTER_DESCRIPTION)
 
 
 @router.callback_query(ClientStates.SELECT_DATE)
