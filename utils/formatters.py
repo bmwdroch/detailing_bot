@@ -171,7 +171,7 @@ def format_appointment_info(appointment: Appointment, include_client: bool = Fal
         f"📅 Запись #{appointment.id}\n"
         f"🕒 {format_datetime(appointment.appointment_time)}\n"
         f"🚗 {appointment.car_info}\n"
-        f"🛠 Услуга #{appointment.service_id}\n"  # Используем service_id
+        f"🛠 Услуга #{appointment.service_name}\n"  # Используем service_name
         f"📊 {format_appointment_status(appointment.status)}"
     )
     

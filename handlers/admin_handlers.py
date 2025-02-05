@@ -16,7 +16,7 @@ from aiogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup,
     KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 )
-from core.models import AppointmentStatus, Service
+from core.models import AppointmentStatus, Service, TransactionType
 from services.analytics.analytics import AnalyticsService
 from services.db.database_manager import DatabaseManager
 from services.notifications.notification_service import NotificationService
@@ -200,9 +200,6 @@ async def cmd_all_appointments(message: Message, db: DatabaseManager, state: FSM
     pagination_kb = get_pagination_keyboard(page, total_pages, "appointments", per_page)
     for row in pagination_kb.inline_keyboard:
         keyboard_rows.append(row)
-
-    # 3. Добавляем кнопку закрытия
-    keyboard_rows.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="close")])
 
     kb = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
     await message.answer(text, reply_markup=kb)
@@ -443,11 +440,6 @@ async def cmd_list_services(message: Message, db: DatabaseManager) -> None:
 
 @router.callback_query(lambda c: c.data and c.data.startswith("appointment:") and "actions" not in c.data)
 async def process_appointment_action(callback: CallbackQuery, db: DatabaseManager, notifications: NotificationService) -> None:
-    """
-    Обрабатывает действия с записью: подтверждение, отмена, завершение и перенесение.
-    Обрабатывает callback data вида "appointment:confirm:<ID>", "appointment:cancel:<ID>", "appointment:complete:<ID>" и т.п.
-    """
-    # Разбираем callback data
     try:
         _, action, appointment_id = callback.data.split(":")
         appointment_id = int(appointment_id)
@@ -460,7 +452,6 @@ async def process_appointment_action(callback: CallbackQuery, db: DatabaseManage
         await callback.answer("Запись не найдена", show_alert=True)
         return
 
-    # Получаем клиента (например, для уведомлений)
     client = await db.get_client_by_id(appointment.client_id)
     if not client:
         await callback.answer("Клиент не найден", show_alert=True)
@@ -468,13 +459,25 @@ async def process_appointment_action(callback: CallbackQuery, db: DatabaseManage
 
     old_status = appointment.status
     if action == "confirm":
-        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.CONFIRMED)
+        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.CONFIRMED.value)
     elif action == "cancel":
-        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.CANCELLED)
+        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.CANCELLED.value)
     elif action == "complete":
-        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.COMPLETED)
+        success, error = await db.update_appointment_status(appointment_id, AppointmentStatus.COMPLETED.value)
+        # Если запись выполнена, автоматически создаём транзакцию:
+        if success:
+            service = await db.get_service(appointment.service_id)
+            if service:
+                trans_success, trans_error, transaction = await db.add_transaction(
+                    amount=str(service.price),
+                    type_=TransactionType.INCOME.value,
+                    category=service.name,  # либо "Услуги"
+                    description="Автоматическая транзакция за выполненную запись",
+                    appointment_id=appointment.id
+                )
+                if not trans_success:
+                    await callback.answer(f"Ошибка при создании транзакции: {trans_error}", show_alert=True)
     elif action == "reschedule":
-        # Если реализована логика переноса – добавить её здесь
         await callback.answer("Функция переноса пока не реализована", show_alert=True)
         return
     else:
@@ -485,22 +488,15 @@ async def process_appointment_action(callback: CallbackQuery, db: DatabaseManage
         await callback.answer(f"Ошибка: {error}", show_alert=True)
         return
 
-    # Обновляем запись
+    # Обновляем запись, получаем обновлённое состояние
     appointment = await db.get_appointment(appointment_id)
-    if not appointment:
-        await callback.answer("Запись не найдена", show_alert=True)
-        return
-
-    # Отправляем уведомление об изменении статуса (обработчик уже реализован)
     await notifications.notify_appointment_status_change(appointment=appointment, client=client, old_status=old_status)
-    # Обновляем сообщение с новой информацией и кнопками действий
     updated_kb = get_appointment_actions_keyboard(appointment_id, appointment.status)
     await callback.message.edit_text(
         format_appointment_info(appointment, include_client=True),
         reply_markup=updated_kb
     )
     await callback.answer()
-
 
 @router.message(F.text == "📈 Статистика")
 async def cmd_statistics(

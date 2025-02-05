@@ -261,12 +261,9 @@ def get_pagination_keyboard(
 
     # Строка для выбора количества элементов на странице (если задано)
     if items_per_page:
-        items_row = [InlineKeyboardButton(text=f"{n}️⃣", callback_data=f"{prefix}:per_page:{n}")
-                     for n in [10, 20, 50]]
+        items_row = [InlineKeyboardButton(text=f"{n}️", callback_data=f"{prefix}:per_page:{n}")
+                     for n in [5, 15, 25]]
         buttons.append(items_row)
-
-    # Строка с кнопкой закрытия
-    buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="close")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
